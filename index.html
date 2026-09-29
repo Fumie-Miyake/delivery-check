@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#FFFFFF">
 <title>納品チェック</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 :root{
   --bg:#EDF1F0; --paper:#FFFFFF; --ink:#1D2B2A; --sub:#566866; --rule:#C9D3D1;
@@ -114,7 +115,9 @@ ol.howto{margin:0;padding-left:1.4em} ol.howto li{margin:4px 0}
 .dialog p{margin:6px 0 14px;color:var(--sub)}
 .numpad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0 18px}
 .numpad button{min-height:64px;font-size:26px;font-weight:700;border:2px solid var(--rule);border-radius:12px;background:var(--paper)}
-.numpad button.on{border-color:var(--part);background:var(--part-bg);color:var(--part)}
+.numpad button.on{border-color:var(--part);background:var(--part);color:#fff}
+.preview{min-height:1.6em;margin:0 0 12px;color:var(--part);font-weight:700}
+.preview.warn{color:var(--late)}
 .dialog .actions{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + var(--safe-b));z-index:15;background:#1D2B2A;color:#fff;border-radius:14px;padding:12px 14px 12px 22px;display:none;align-items:center;gap:16px;max-width:92vw;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 .toast.on{display:flex}
@@ -202,7 +205,7 @@ footer{color:var(--sub);font-size:14px;text-align:center;padding:6px 0 20px}
       <p style="margin-top:0;color:var(--sub)">試しに使ったデータを消して、使い始める前の状態に戻すときに使います。消したデータは元に戻せません。</p>
       <button class="btn danger" id="wipe">すべてのデータを消す</button>
     </section>
-    <footer>納品チェック v2026.09.29-1 ／ データはこのiPadの中だけに保存されます</footer>
+    <footer>納品チェック v2026.09.29-2 ／ データはこのiPadの中だけに保存されます</footer>
   </div>
 </main>
 
@@ -10628,7 +10631,7 @@ if (typeof module !== 'undefined') module.exports = HCQ;
    データはこのiPadのブラウザ内（IndexedDB）だけに保存する。
    ============================================================ */
 (() => {
-  const VERSION = 'v2026.09.29-1';
+  const VERSION = 'v2026.09.29-2';
   const SCHEMA = 1;             // 保存データの形の版。形を変えたら上げて、古いデータを読み替える
   const DONE_DAYS = 7;          // 「納品済み」「すべて」に表示する日数
   const $ = id => document.getElementById(id);
@@ -10840,30 +10843,39 @@ if (typeof module !== 'undefined') module.exports = HCQ;
     const nums = [];
     for (let n = 1; n < rest && n <= 15; n++) nums.push(n);
     dialog(`<h3>${esc(o.name)}</h3>
-      <p>発注 ${o.qty}個 ／ これまでに届いた数 ${o.delivered}個${rest >= 2 ? '<br>今回届いた数を選んでください。' : ''}</p>
+      <p>発注 ${o.qty}個 ／ これまでに届いた数 ${o.delivered}個${rest >= 2 ? '<br>今回届いた数をタップしてから「記録する」を押してください。' : ''}</p>
       ${rest < 2 ? `<p style="color:var(--ink)">残りは${rest}個です。届いたら、行の左の丸をタップしてください。</p>` : rest > 16 ? `<p><input id="dNum" type="number" inputmode="numeric" min="1" max="${rest - 1}" style="font-size:26px;width:8em;padding:8px;border:2px solid var(--rule);border-radius:10px"> 個（1〜${rest - 1}）</p>` :
-        `<div class="numpad" id="dPad">${nums.map(n => `<button data-n="${n}">${n}</button>`).join('')}</div>`}
+        `<div class="numpad" id="dPad">${nums.map(n => `<button type="button" data-n="${n}">${n}</button>`).join('')}</div>`}
+      <p class="preview" id="dPrev"></p>
       <div class="actions">
-        ${o.delivered > 0 ? '<button class="btn danger" id="dReset">届いた数を0に戻す</button>' : ''}
-        <button class="btn" data-close>やめる</button>
-        ${rest >= 2 ? '<button class="btn primary" id="dOk" disabled>記録する</button>' : ''}
+        ${o.delivered > 0 ? '<button type="button" class="btn danger" id="dReset">届いた数を0に戻す</button>' : ''}
+        <button type="button" class="btn" data-close>やめる</button>
+        ${rest >= 2 ? '<button type="button" class="btn primary" id="dOk">記録する</button>' : ''}
       </div>`);
+    const prev = $('dPrev');
+    const setPick = n => {
+      pick = n;
+      const ok = pick >= 1 && pick < rest;
+      prev.textContent = ok ? `記録すると：一部納品 ${o.delivered + pick}/${o.qty}（残り${rest - pick}個）` : '';
+      prev.classList.remove('warn');
+    };
     const pd = $('dPad');
-    if (pd) pd.onclick = e => { const b = e.target.closest('button[data-n]'); if (!b) return; pick = +b.dataset.n; pd.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); $('dOk').disabled = false; };
+    if (pd) pd.querySelectorAll('button[data-n]').forEach(btn => btn.addEventListener('click', () => {
+      pd.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === btn));
+      setPick(+btn.dataset.n);
+    }));
     const ni = $('dNum');
-    if (ni) ni.oninput = () => { pick = parseInt(ni.value, 10) || 0; $('dOk').disabled = !(pick >= 1 && pick < rest); };
-    if ($('dOk')) $('dOk').onclick = async () => {
-      const now = Date.now();
-      o.checks.push({ at: now, type: 'partial', count: pick });
-      o.delivered += pick; o.lastCheckedAt = now;
-      await putOrder(o); closeDialog(); renderList();
+    if (ni) ni.addEventListener('input', () => setPick(parseInt(ni.value, 10) || 0));
+    const save = async (fn) => {
+      try { fn(); await putOrder(o); closeDialog(); renderList(); }
+      catch (e) { prev.textContent = '保存できませんでした：' + e.message; prev.classList.add('warn'); }
     };
-    if ($('dReset')) $('dReset').onclick = async () => {
-      const now = Date.now();
-      o.checks.push({ at: now, type: 'undo', from: o.delivered });
-      o.delivered = 0; o.lastCheckedAt = now;
-      await putOrder(o); closeDialog(); renderList();
-    };
+    if ($('dOk')) $('dOk').addEventListener('click', () => {
+      if (!(pick >= 1 && pick < rest)) { prev.textContent = '先に、今回届いた数をタップしてください。'; prev.classList.add('warn'); return; }
+      save(() => { const now = Date.now(); o.checks.push({ at: now, type: 'partial', count: pick }); o.delivered += pick; o.lastCheckedAt = now; });
+    });
+    if ($('dReset')) $('dReset').addEventListener('click', () =>
+      save(() => { const now = Date.now(); o.checks.push({ at: now, type: 'undo', from: o.delivered }); o.delivered = 0; o.lastCheckedAt = now; }));
   }
 
   /* ---------- 小窓・お知らせ ---------- */
@@ -10994,6 +11006,11 @@ if (typeof module !== 'undefined') module.exports = HCQ;
     };
   };
   const isStandalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+
+  /* ---------- 予期しない不具合の表示 ---------- */
+  const showBug = m => toast('不具合が起きました：' + m + '（この画面の写真を作成者に伝えてください）');
+  window.addEventListener('error', e => showBug(e.message));
+  window.addEventListener('unhandledrejection', e => showBug((e.reason && e.reason.message) || String(e.reason)));
 
   /* ---------- 起動 ---------- */
   (async () => {
