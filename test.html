@@ -33,6 +33,9 @@ ul.check li{padding:4px 0}
 .cam{position:relative;background:#000;border-radius:14px;overflow:hidden;border:6px solid transparent;transition:border-color .15s}
 .cam.hit{border-color:#3FB68B}
 .cam video{display:block;width:100%;max-height:60vh;object-fit:contain}
+.guide{position:absolute;border:4px solid rgba(255,255,255,.9);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none}
+.guide span{position:absolute;left:0;right:0;top:-2.2em;text-align:center;color:#fff;font-size:18px;font-weight:700;text-shadow:0 1px 3px #000}
+.diag{text-align:center;color:var(--sub);font-size:14px;margin:4px 0 0}
 .progress{font-size:24px;margin:14px 0 6px;text-align:center}
 .progress b{font-size:48px;color:var(--accent);margin:0 4px}
 .dots{display:flex;justify-content:center;gap:12px;margin-bottom:6px}
@@ -53,7 +56,7 @@ footer{color:var(--sub);font-size:14px;text-align:center;padding:10px 0 30px}
 </style>
 </head>
 <body>
-<header><h1>QR読み取りテスト</h1><span>v2026.09.28-1</span></header>
+<header><h1>QR読み取りテスト</h1><span>v2026.09.28-2</span></header>
 <main>
   <section id="envBox">
     <h2>このiPadで使えるか</h2>
@@ -73,8 +76,9 @@ footer{color:var(--sub);font-size:14px;text-align:center;padding:10px 0 30px}
     <div id="camWrap" hidden>
       <div class="progress"><b id="got">0</b>枚 読み取り済み ／ 全<b id="tot">?</b>枚</div>
       <div class="dots" id="dots"></div>
-      <div class="cam" id="cam"><video id="video" playsinline muted autoplay></video></div>
-      <p class="msg" id="msg">QRコードが画面の中に収まるように、iPadを近づけたり離したりしてください。</p>
+      <div class="cam" id="cam"><video id="video" playsinline muted autoplay></video><div class="guide" id="guide"><span>この枠にQRコードを合わせる</span></div></div>
+      <p class="diag" id="diag"></p>
+      <p class="msg" id="msg">白い枠の中にQRコードが収まるように、iPadを近づけたり離したりしてください。</p>
     </div>
   </section>
 
@@ -10522,7 +10526,7 @@ if (typeof module !== 'undefined') module.exports = HCQ;
   function showError(t) { $('error').textContent = t; $('error').hidden = false; }
 
   /* ---------- カメラと読み取り ---------- */
-  let stream = null, facing = 'environment', timer = null, parts = new Map(), batch = null, total = 0, t0 = 0, audio = null;
+  let stream = null, facing = 'environment', scanning = false, frameNo = 0, times = [], parts = new Map(), batch = null, total = 0, t0 = 0, audio = null;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
@@ -10544,26 +10548,64 @@ if (typeof module !== 'undefined') module.exports = HCQ;
     const v = $('video'); v.srcObject = stream; await v.play().catch(() => {});
     $('camWrap').hidden = false; $('stop').hidden = false; $('flip').hidden = false;
     t0 = Date.now();
-    timer = setInterval(scan, 150);
+    placeGuide();
+    scanning = true; frameNo = 0; loop();
   }
   function stopCam() {
-    clearInterval(timer); timer = null;
+    scanning = false;
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; $('stop').hidden = true; $('flip').hidden = true;
   }
   function reset() {
     parts = new Map(); batch = null; total = 0;
     $('got').textContent = '0'; $('tot').textContent = '?'; $('dots').innerHTML = '';
-    $('msg').textContent = 'QRコードが画面の中に収まるように、iPadを近づけたり離したりしてください。';
+    $('msg').textContent = '白い枠の中にQRコードが収まるように、iPadを近づけたり離したりしてください。';
   }
 
+  /* 白い枠の位置を、画面に映っている映像に合わせる */
+  const GUIDE = 0.75; // 映像の短い辺に対する枠の大きさ（読み取る範囲と同じ）
+  function placeGuide() {
+    const v = $('video'), g = $('guide');
+    if (!v.videoWidth) { setTimeout(placeGuide, 200); return; }
+    const bw = v.clientWidth, bh = v.clientHeight;
+    const k = Math.min(bw / v.videoWidth, bh / v.videoHeight);
+    const dw = v.videoWidth * k, dh = v.videoHeight * k;
+    const side = Math.min(dw, dh) * GUIDE;
+    g.style.width = g.style.height = side + 'px';
+    g.style.left = (bw - side) / 2 + 'px'; g.style.top = (bh - side) / 2 + 'px';
+  }
+  window.addEventListener('resize', () => stream && placeGuide());
+
+  /* 読み取りの繰り返し：
+     ・ふだんは枠の中だけを、元の細かさのまま読む（速くて、細かい模様も潰れない）
+     ・5回に1回は映像全体を縮めて読む（枠から外れていても拾えるように） */
+  function loop() {
+    if (!scanning) return;
+    const t = performance.now();
+    scan();
+    const ms = performance.now() - t;
+    times.push(ms); if (times.length > 20) times.shift();
+    const v = $('video');
+    if (v.videoWidth && frameNo % 10 === 0) $('diag').textContent =
+      `映像 ${v.videoWidth}×${v.videoHeight}　1回の読み取り処理 約${Math.round(times.reduce((a, b) => a + b, 0) / times.length)}ミリ秒`;
+    requestAnimationFrame(() => setTimeout(loop, 0));
+  }
   function scan() {
     const v = $('video');
     if (!v.videoWidth) return;
-    const s = Math.min(1, 1600 / Math.max(v.videoWidth, v.videoHeight));
-    const w = Math.round(v.videoWidth * s), h = Math.round(v.videoHeight * s);
+    frameNo++;
+    const vw = v.videoWidth, vh = v.videoHeight;
+    let sx, sy, sw, sh, w, h;
+    if (frameNo % 5 !== 0) {
+      const side = Math.round(Math.min(vw, vh) * GUIDE);
+      sx = (vw - side) / 2; sy = (vh - side) / 2; sw = sh = side;
+      w = h = Math.min(side, 1000);
+    } else {
+      sx = sy = 0; sw = vw; sh = vh;
+      const k = Math.min(1, 1280 / Math.max(vw, vh)); w = Math.round(vw * k); h = Math.round(vh * k);
+    }
     canvas.width = w; canvas.height = h;
-    ctx.drawImage(v, 0, 0, w, h);
+    ctx.drawImage(v, sx, sy, sw, sh, 0, 0, w, h);
     const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
     if (code && code.binaryData && code.binaryData.length) take(Uint8Array.from(code.binaryData));
   }
